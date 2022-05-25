@@ -1,17 +1,16 @@
 const hubspot = require('@hubspot/api-client');
 const axios = require('axios');
-
 exports.main = async (event, callback) => {
-
-    const hubspotClient = new hubspot.Client({
+const hubspotClient = new hubspot.Client({
         apiKey: process.env.HAPIKEY
     });
-
     // Get Associated Company ID
     const getCompanyId = await hubspotClient.crm.contacts.associationsApi.getAll(event.object.objectId,'company');
-    const companyId = getCompanyId.body.results[0].id;
-
-    // Define parameters sent to Clearbit
+    var companyId = "";
+    if(getCompanyId.body.results.length > 0) { 
+      companyId = getCompanyId.body.results[0].id; 
+    }
+    // Parameters we're sending to Clearbit
     // Person
     var email = event.inputFields['email'];
     var firstname = event.inputFields['firstname'];
@@ -19,11 +18,10 @@ exports.main = async (event, callback) => {
     var ipaddress = event.inputFields['ip_address_form'];
     var country = event.inputFields['country'];
     // Company
-    var companyname = event.inputFields['company']; 
-    // var companydomain = event.inputFields[''];
-
+    var companyname = event.inputFields['company']; // company name from contact field
+    // var companydomain = event.inputFields['']; // company domain from associated company?
     // Enrichment endpoint GET request
-    axios.get("https://person.clearbit.com/v2/combined/find", {
+    axios.get("https://person-stream.clearbit.com/v2/combined/find", {
         "params": {
             "email": email,
             "given_name": firstname,
@@ -36,42 +34,39 @@ exports.main = async (event, callback) => {
             "Authorization": "Bearer " + process.env.CLEARBITKEY
         }
       })
-
       .then((response) => {
-          // Update Company
-          hubspotClient.crm.contacts.basicApi.update(event.object.objectId, {
-              "properties": {
-                  // Example: "hubspot property name": "response.data.property"
-                  
-                  // Employment
-                  "jobtitle": response.data.person.employment.title,
-                  "role": response.data.person.employment.role,
-                  "sub_role": response.data.person.employment.subRole,
-                  "seniority": response.data.person.employment.seniority,
-                  "website": response.data.person.employment.domain,
-                  
-                  // Social
-                  "linkedin_url": "www.linkedin.com/".concat(response.data.person.linkedin.handle),
-                  "twitterhandle": response.data.person.twitter.handle,
-                  "followercount": response.data.person.twitter.followers,
-                  "linkedinbio": response.data.person.bio,
-                  "twitterbio": response.data.person.bio,
-                  
-                  // Location
-                  "country": response.data.person.geo.country,
-                  "state": response.data.person.geo.state,
-                  "city": response.data.person.geo.city,
-                  "address": response.data.person.location,
-                  
-                  "clearbit_fuzzy": response.data.person.fuzzy
-                
-            }
-        })
+        // Update Contact
+        if (response.data.person !== null ) {
+            hubspotClient.crm.contacts.basicApi.update(event.object.objectId, {
+                "properties": {
+                // "hubspot property name": "response.data.property"
+                // Employment Information
+                "jobtitle": response.data.person.employment.title,
+                "role": response.data.person.employment.role,
+                "sub_role": response.data.person.employment.subRole,
+                "seniority": response.data.person.employment.seniority,
+                "website": response.data.person.employment.domain,
+                // Social information
+                "linkedin_url": "www.linkedin.com/".concat(response.data.person.linkedin.handle), // TODO Need to add 'www.linkedin.com/' before
+                "twitterhandle": response.data.person.twitter.handle,
+                "followercount": response.data.person.twitter.followers,
+                "linkedinbio": response.data.person.bio,
+                "twitterbio": response.data.person.bio,
+                // Location Information
+                // "country": response.data.person.geo.country, // NOT SURE - override or no?
+                "state": response.data.person.geo.state,
+                "city": response.data.person.geo.city,
+                "address": response.data.person.location,
+                "clearbit_fuzzy": response.data.person.fuzzy
+                }
+            })
+        }
         
         // Update Company
         hubspotClient.crm.companies.basicApi.update(companyId, {
             "properties": {
-                // General
+                // "hubspot property name": "response.data.property"
+                // General Information
                 "name": response.data.company.name,
                 "domain": response.data.company.domain, // Not sure if should override
                 "description": response.data.company.description,
@@ -82,23 +77,20 @@ exports.main = async (event, callback) => {
                 "parent_domain": response.data.company.parent.domain,
                 "ultimate_parent_domain": response.data.company.ultimateParent.domain,
                 
-                // Industry
+                // Industry Information
                 "sector": response.data.company.category.sector,
                 "industry_group": response.data.company.category.industryGroup,
                 "industry_clearbit": response.data.company.category.industry,
                 "sub_industry": response.data.company.category.subIndustry,
-
-                // Tech
+                // Tech Information
                 "company_tech": response.data.company.tech.join(","), // Array
-
-                // Social
+                // Social Information
                 "twitterhandle": response.data.company.twitter.handle,
                 "twitterbio": response.data.company.twitter.bio,
                 "twitterfollowers": response.data.company.twitter.followers,
                 "linkedin_company_page": "www.linkedin.com/".concat(response.data.company.linkedin.handle), 
                 "facebook_company_page": response.data.company.facebook.handle,
-
-                // Location
+                // Location Information
                 "longitude": response.data.company.geo.lng,
                 "latitude": response.data.company.geo.lat,
                 "timezone": response.data.company.timeZone,
@@ -107,8 +99,7 @@ exports.main = async (event, callback) => {
                 "city": response.data.company.geo.city,
                 "address": response.data.company.location,
                 "zip": response.data.company.geo.postalCode,
-
-                // Metrics
+                // Firmographic Metrics
                 "alexa_global": response.data.company.metrics.alexaGlobalRank,
                 "alexa_us": response.data.company.metrics.alexaUsRank,
                 "company_size_brackets": response.data.company.metrics.employeesRange,
@@ -118,18 +109,15 @@ exports.main = async (event, callback) => {
                 "estimated_annual_revenue": response.data.company.metrics.estimatedAnnualRevenue
             }
         });
-
-        callback({
-            "outputFields":{
-                "enrichmentError": response.data.error.type,
-                "errorMessage": response.data.error.message
-            }
-        });
-      
       })
-
     .catch((error) => {
-        console.log(error);
-        // throw error;
+      if (error.response) {
+        hubspotClient.crm.contacts.basicApi.update(event.object.objectId, {
+          "properties": {
+            "clearbit_error": error.response.status,
+          }
+        });
+      }
+      console.log(error);
     });
 }
